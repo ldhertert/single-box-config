@@ -1,0 +1,61 @@
+#!/usr/bin/env pwsh
+
+param(
+    [Parameter()]
+    [string] $hostname = "http://nexus.local:8081",
+
+    [Parameter()]
+    [string] $username = "admin",
+
+    [Parameter()]
+    [string] $password = "admin123",
+
+    [Parameter()]
+    [string] $repoName = "docker",
+
+    [Parameter()]
+    [int] $dockerPort = 8082
+)
+
+try {
+    $ErrorActionPreference = "Stop"
+
+    $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("{0}:{1}" -f $username,$password)))
+
+    $headers = @{
+        Accept = "application/json"
+        "Content-Type" = "application/json"
+        Authorization = "Basic $base64AuthInfo"
+    }
+
+    $scriptName = "nexus-bootstrap-$(-join ((48..57) + (97..122) | Get-Random -Count 32 | % {[char]$_}))"
+
+    $body = @{
+        name = $scriptName
+        type = "groovy"
+        content = @"
+            security.setAnonymousAccess(false)
+            repository.createDockerHosted('$repoName', $dockerPort, null)
+            def rawStore = blobStore.createFileBlobStore('raw', 'raw')
+            repository.createRawHosted('raw-content', rawStore.name)
+            security.securitySystem.changePassword('admin','password')
+"@
+    }
+
+    echo "Saving nexus provisioner script $scriptName...."
+
+    Invoke-RestMethod "$hostname/service/rest/v1/script" -Method 'POST' -Headers $headers -Body $($body | ConvertTo-Json)
+    echo "Running script..."
+    $headers = @{
+        Accept = "application/json"
+        "Content-Type" = "text/plain"
+        Authorization = "Basic $base64AuthInfo"
+    }
+
+    $response = Invoke-RestMethod "$hostname/service/rest/v1/script/$scriptName/run" -Method 'POST' -Headers $headers
+} catch {
+    $err=$_
+    $err
+}
+
+
